@@ -3,6 +3,11 @@ const router = express.Router();
 const { body, validationResult } = require("express-validator");
 const Order = require("../models/Order");
 const { protect, adminOnly, optionalAuth } = require("../middleware/auth");
+const {
+  sendCustomerOrderEmail,
+  sendAdminNewOrderAlert,
+  sendCustomerStatusUpdateEmail,
+} = require("../utils/email");
 
 // ─────────────────────────────────────────────
 // POST /api/orders  (place an order)
@@ -57,6 +62,10 @@ router.post(
       }
 
       const order = await Order.create(orderData);
+
+      // Asynchronously send emails (don't block HTTP response)
+      sendCustomerOrderEmail(order).catch(err => console.error("Error sending order confirmation email:", err));
+      sendAdminNewOrderAlert(order).catch(err => console.error("Error sending admin new order alert:", err));
 
       res.status(201).json({
         success: true,
@@ -212,9 +221,19 @@ router.put("/:id", protect, adminOnly, async (req, res) => {
     if (trackingNumber !== undefined) updates.trackingNumber = trackingNumber;
     if (courier !== undefined) updates.courier = courier;
 
-    const order = await Order.findByIdAndUpdate(req.params.id, updates, { new: true });
-    if (!order) {
+    const existingOrder = await Order.findById(req.params.id);
+    if (!existingOrder) {
       return res.status(404).json({ success: false, message: "Order not found." });
+    }
+
+    const previousStatus = existingOrder.status;
+    const order = await Order.findByIdAndUpdate(req.params.id, updates, { new: true });
+
+    // If status was updated to a different value, notify customer
+    if (status && status !== previousStatus) {
+      sendCustomerStatusUpdateEmail(order, status).catch(err =>
+        console.error("Error sending status update email:", err)
+      );
     }
 
     res.json({ success: true, order });
