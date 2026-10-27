@@ -1,23 +1,81 @@
+const { Resend } = require("resend");
 const nodemailer = require("nodemailer");
 
-// Create reusable transporter using Gmail SMTP
-const createTransporter = () => {
+// Initialize Resend client if API key is present
+const getResend = () => {
+  if (process.env.RESEND_API_KEY) {
+    return new Resend(process.env.RESEND_API_KEY);
+  }
+  return null;
+};
+
+// Fallback nodemailer transporter if Gmail credentials are provided
+const createNodemailerTransporter = () => {
   const user = process.env.EMAIL_USER;
   const pass = process.env.EMAIL_PASS ? process.env.EMAIL_PASS.replace(/\s+/g, "") : "";
 
-  if (!user || !pass) {
-    console.warn("⚠️ Email service: EMAIL_USER or EMAIL_PASS not configured in environment variables.");
-    return null;
-  }
+  if (!user || !pass) return null;
 
   return nodemailer.createTransport({
     service: "gmail",
-    auth: {
-      user,
-      pass,
-    },
+    auth: { user, pass },
   });
 };
+
+/**
+ * Universal email sender function:
+ * 1. Prefers Resend API if RESEND_API_KEY is available.
+ * 2. Falls back to Nodemailer (Gmail SMTP) if Resend is not configured.
+ */
+async function sendEmail({ to, subject, html }) {
+  const resend = getResend();
+
+  // Option A: Send via Resend
+  if (resend) {
+    try {
+      const fromEmail = process.env.RESEND_FROM_EMAIL || "Hadeed by Niazi <onboarding@resend.dev>";
+      const result = await resend.emails.send({
+        from: fromEmail,
+        to: Array.isArray(to) ? to : [to],
+        subject,
+        html,
+      });
+
+      if (result.error) {
+        console.error("❌ Resend error:", result.error);
+        return false;
+      }
+
+      console.log(`✅ Email sent via Resend to ${to} (ID: ${result.data?.id})`);
+      return true;
+    } catch (err) {
+      console.error("❌ Resend dispatch error:", err.message);
+      return false;
+    }
+  }
+
+  // Option B: Send via Nodemailer (Gmail)
+  const transporter = createNodemailerTransporter();
+  if (transporter) {
+    try {
+      const fromEmail = process.env.EMAIL_USER;
+      await transporter.sendMail({
+        from: `"Hadeed by Niazi" <${fromEmail}>`,
+        to,
+        subject,
+        html,
+      });
+      console.log(`✅ Email sent via Gmail SMTP to ${to}`);
+      return true;
+    } catch (err) {
+      console.error("❌ Gmail SMTP dispatch error:", err.message);
+      return false;
+    }
+  }
+
+  console.warn("⚠️ No email service configured (Neither RESEND_API_KEY nor EMAIL_USER/PASS found).");
+  return false;
+}
 
 // Format items list into HTML table rows
 const formatItemsTable = (items = []) => {
@@ -47,10 +105,6 @@ async function sendCustomerOrderEmail(order) {
       return false;
     }
 
-    const transporter = createTransporter();
-    if (!transporter) return false;
-
-    const fromEmail = process.env.EMAIL_USER;
     const addressStr = `${order.address?.street || ""}, ${order.address?.city || ""}, ${order.address?.province || ""}`.replace(/^, |, $/g, "");
 
     const html = `
@@ -103,15 +157,11 @@ async function sendCustomerOrderEmail(order) {
       </div>
     `;
 
-    await transporter.sendMail({
-      from: `"Hadeed by Niazi" <${fromEmail}>`,
+    return await sendEmail({
       to: order.customerEmail,
       subject: `Order Confirmed: ${order.orderNumber} - Hadeed by Niazi`,
       html,
     });
-
-    console.log(`✅ Order confirmation email sent to customer: ${order.customerEmail}`);
-    return true;
   } catch (err) {
     console.error("❌ Error sending customer order email:", err.message);
     return false;
@@ -124,10 +174,6 @@ async function sendCustomerOrderEmail(order) {
 async function sendAdminNewOrderAlert(order) {
   try {
     const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL || process.env.EMAIL_USER || "hadeedbyniazii@gmail.com";
-    const transporter = createTransporter();
-    if (!transporter) return false;
-
-    const fromEmail = process.env.EMAIL_USER;
     const addressStr = `${order.address?.street || ""}, ${order.address?.city || ""}, ${order.address?.province || ""}`.replace(/^, |, $/g, "");
 
     const html = `
@@ -172,15 +218,11 @@ async function sendAdminNewOrderAlert(order) {
       </div>
     `;
 
-    await transporter.sendMail({
-      from: `"Hadeed Store Orders" <${fromEmail}>`,
+    return await sendEmail({
       to: adminEmail,
       subject: `🚨 Naya Order: ${order.orderNumber} - Rs. ${order.totalAmount} (${order.customerName})`,
       html,
     });
-
-    console.log(`✅ New order notification email sent to admin: ${adminEmail}`);
-    return true;
   } catch (err) {
     console.error("❌ Error sending admin order alert:", err.message);
     return false;
@@ -196,11 +238,6 @@ async function sendCustomerStatusUpdateEmail(order, newStatus) {
       console.log(`ℹ️ No customer email for order ${order.orderNumber}. Skipping status notification.`);
       return false;
     }
-
-    const transporter = createTransporter();
-    if (!transporter) return false;
-
-    const fromEmail = process.env.EMAIL_USER;
 
     const statusDetails = {
       pending: { title: "Order Pending", color: "#f59e0b", desc: "Aapka order receive ho chuka hai aur pending verification hai." },
@@ -247,15 +284,11 @@ async function sendCustomerStatusUpdateEmail(order, newStatus) {
       </div>
     `;
 
-    await transporter.sendMail({
-      from: `"Hadeed by Niazi" <${fromEmail}>`,
+    return await sendEmail({
       to: order.customerEmail,
       subject: `Order Update [${currentDetail.title}]: ${order.orderNumber} - Hadeed by Niazi`,
       html,
     });
-
-    console.log(`✅ Order status update email sent to customer: ${order.customerEmail} (${newStatus})`);
-    return true;
   } catch (err) {
     console.error("❌ Error sending customer status update email:", err.message);
     return false;
