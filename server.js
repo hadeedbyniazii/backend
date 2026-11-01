@@ -13,6 +13,9 @@ const rateLimit = require("express-rate-limit");
 
 const app = express();
 
+// Trust reverse proxy (Render, Heroku, Cloudflare) so express-rate-limit gets real client IP
+app.set("trust proxy", 1);
+
 // ─────────────────────────────────────────────
 // MIDDLEWARE
 // ─────────────────────────────────────────────

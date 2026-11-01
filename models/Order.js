@@ -77,11 +77,34 @@ const orderSchema = new mongoose.Schema(
   }
 );
 
-// Auto-generate order number before saving
+// Auto-generate order number before saving with collision-proof retry logic
 orderSchema.pre("save", async function (next) {
   if (!this.orderNumber) {
-    const count = await mongoose.model("Order").countDocuments();
-    this.orderNumber = `HD-${String(count + 1).padStart(4, "0")}`;
+    const OrderModel = mongoose.model("Order");
+    // Find highest existing HD-XXXX number or fallback to count
+    let nextNum = 1;
+    const latestOrder = await OrderModel.findOne({ orderNumber: /^HD-\d+$/ })
+      .sort({ createdAt: -1, _id: -1 })
+      .select("orderNumber");
+
+    if (latestOrder && latestOrder.orderNumber) {
+      const match = latestOrder.orderNumber.match(/^HD-(\d+)$/);
+      if (match) {
+        nextNum = parseInt(match[1], 10) + 1;
+      }
+    } else {
+      const count = await OrderModel.countDocuments();
+      nextNum = count + 1;
+    }
+
+    // Ensure uniqueness even if an order was deleted or duplicate exists
+    let candidate = `HD-${String(nextNum).padStart(4, "0")}`;
+    while (await OrderModel.exists({ orderNumber: candidate })) {
+      nextNum++;
+      candidate = `HD-${String(nextNum).padStart(4, "0")}`;
+    }
+
+    this.orderNumber = candidate;
   }
   next();
 });
