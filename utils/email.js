@@ -24,13 +24,30 @@ const createNodemailerTransporter = () => {
 
 /**
  * Universal email sender function:
- * 1. Prefers Resend API if RESEND_API_KEY is available.
- * 2. Falls back to Nodemailer (Gmail SMTP) if Resend is not configured.
+ * 1. Uses Nodemailer (Gmail App Password) as primary because it sends to ALL recipients (admin + any customer) reliably without domain restrictions.
+ * 2. Falls back to Resend API if Nodemailer is unavailable or fails.
  */
 async function sendEmail({ to, subject, html }) {
-  const resend = getResend();
+  // Option A: Primary - Send via Nodemailer (Gmail App Password)
+  const transporter = createNodemailerTransporter();
+  if (transporter) {
+    try {
+      const fromEmail = process.env.EMAIL_USER;
+      await transporter.sendMail({
+        from: `"Hadeed by Niazi" <${fromEmail}>`,
+        to,
+        subject,
+        html,
+      });
+      console.log(`✅ Email sent via Gmail SMTP to ${to}`);
+      return true;
+    } catch (err) {
+      console.error("❌ Gmail SMTP dispatch error, attempting fallback:", err.message);
+    }
+  }
 
-  // Option A: Send via Resend
+  // Option B: Fallback - Send via Resend
+  const resend = getResend();
   if (resend) {
     try {
       const fromEmail = process.env.RESEND_FROM_EMAIL || "Hadeed by Niazi <onboarding@resend.dev>";
@@ -54,26 +71,7 @@ async function sendEmail({ to, subject, html }) {
     }
   }
 
-  // Option B: Send via Nodemailer (Gmail)
-  const transporter = createNodemailerTransporter();
-  if (transporter) {
-    try {
-      const fromEmail = process.env.EMAIL_USER;
-      await transporter.sendMail({
-        from: `"Hadeed by Niazi" <${fromEmail}>`,
-        to,
-        subject,
-        html,
-      });
-      console.log(`✅ Email sent via Gmail SMTP to ${to}`);
-      return true;
-    } catch (err) {
-      console.error("❌ Gmail SMTP dispatch error:", err.message);
-      return false;
-    }
-  }
-
-  console.warn("⚠️ No email service configured (Neither RESEND_API_KEY nor EMAIL_USER/PASS found).");
+  console.warn("⚠️ No email service configured (Neither EMAIL_USER/PASS nor RESEND_API_KEY worked).");
   return false;
 }
 
