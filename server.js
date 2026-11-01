@@ -259,12 +259,22 @@ connectDB().then(() => {
     console.log(`   Port:        http://localhost:${PORT}`);
     console.log(`   Health:      http://localhost:${PORT}/api/health`);
     console.log(`   Environment: ${process.env.NODE_ENV}`);
+
+    // Print email configuration presence on startup (boolean only, zero secret leakage)
+    console.log("\n📧 Email Dispatch Configuration Status:");
+    console.log(`   RESEND_API_KEY:            ${Boolean(process.env.RESEND_API_KEY)}`);
+    console.log(`   RESEND_FROM_EMAIL:         ${Boolean(process.env.RESEND_FROM_EMAIL)}`);
+    console.log(`   ADMIN_NOTIFICATION_EMAIL:  ${Boolean(process.env.ADMIN_NOTIFICATION_EMAIL)}`);
+    console.log(`   EMAIL_USER:                ${Boolean(process.env.EMAIL_USER)}`);
+    console.log(`   EMAIL_PASS:                ${Boolean(process.env.EMAIL_PASS)}`);
+
     console.log("\n📌 API Endpoints:");
     console.log("   POST   /api/auth/register");
     console.log("   POST   /api/auth/login");
     console.log("   GET    /api/auth/me");
     console.log("   GET    /api/orders        (admin)");
     console.log("   POST   /api/orders        (place order)");
+    console.log("   POST   /api/admin/test-email (admin)");
     console.log("   GET    /api/users         (admin)");
     console.log("   GET    /api/reviews       (public)");
     console.log("   POST   /api/reviews       (submit)");

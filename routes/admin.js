@@ -127,4 +127,55 @@ router.get("/revenue-chart", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────
+// POST /api/admin/test-email  (test email dispatch)
+// ─────────────────────────────────────────────
+router.post("/test-email", async (req, res) => {
+  try {
+    const { sendEmail } = require("../utils/email");
+    const recipient = process.env.ADMIN_NOTIFICATION_EMAIL || process.env.EMAIL_USER || "hadeedbyniazii@gmail.com";
+
+    const testHtml = `
+      <div style="font-family: Arial, sans-serif; padding: 20px; color: #111;">
+        <h2 style="color: #047857;">Hadeed by Niazi - Email Test</h2>
+        <p>This is a test notification from the Hadeed by Niazi backend system.</p>
+        <p>Timestamp: <strong>${new Date().toISOString()}</strong></p>
+        <p>Environment: <strong>${process.env.NODE_ENV || "production"}</strong></p>
+      </div>
+    `;
+
+    const result = await sendEmail(
+      {
+        to: recipient,
+        subject: `[Test] Hadeed by Niazi Email Configuration Check (${new Date().toLocaleTimeString()})`,
+        html: testHtml,
+      },
+      true // return provider and error details
+    );
+
+    if (result.success) {
+      return res.json({
+        success: true,
+        message: `Test email sent successfully via ${result.provider}`,
+        provider: result.provider,
+        recipientDomain: recipient.includes("@") ? `@${recipient.split("@")[1]}` : "configured",
+      });
+    } else {
+      return res.status(502).json({
+        success: false,
+        message: "Email dispatch failed across configured providers",
+        provider: result.provider,
+        error: result.error,
+      });
+    }
+  } catch (err) {
+    console.error("Test email endpoint error:", err.message);
+    res.status(500).json({
+      success: false,
+      message: "Unexpected error testing email dispatch",
+      error: err.message,
+    });
+  }
+});
+
 module.exports = router;

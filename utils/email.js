@@ -1,6 +1,15 @@
 const { Resend } = require("resend");
 const nodemailer = require("nodemailer");
 
+/**
+ * Helper to mask recipient email and get domain safely for secret-free logs
+ */
+const getRecipientDomain = (email) => {
+  if (!email || typeof email !== "string") return "unknown";
+  const parts = email.split("@");
+  return parts.length > 1 ? `@${parts[1]}` : "invalid-email";
+};
+
 // Initialize Resend client if API key is present
 const getResend = () => {
   if (process.env.RESEND_API_KEY) {
@@ -19,59 +28,125 @@ const createNodemailerTransporter = () => {
   return nodemailer.createTransport({
     service: "gmail",
     auth: { user, pass },
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 8000,
   });
 };
 
 /**
  * Universal email sender function:
- * 1. Uses Nodemailer (Gmail App Password) as primary because it sends to ALL recipients (admin + any customer) reliably without domain restrictions.
- * 2. Falls back to Resend API if Nodemailer is unavailable or fails.
+ * 1. PRIMARY: Resend (HTTPS API). Works reliably on cloud environments (e.g. Render free tier
+ *    where outbound SMTP ports 25/465/587 are blocked).
+ * 2. SECONDARY FALLBACK: Gmail SMTP (Nodemailer), protected with ~8-10s timeout so blocked ports
+ *    never hang requests.
+ *
+ * Can return an object if returnDetails=true (useful for /api/admin/test-email)
  */
-async function sendEmail({ to, subject, html }) {
-  // Option A: Primary - Send via Nodemailer (Gmail App Password)
-  const transporter = createNodemailerTransporter();
-  if (transporter) {
-    try {
-      const fromEmail = process.env.EMAIL_USER;
-      await transporter.sendMail({
-        from: `"Hadeed by Niazi" <${fromEmail}>`,
-        to,
-        subject,
-        html,
-      });
-      console.log(`✅ Email sent via Gmail SMTP to ${to}`);
-      return true;
-    } catch (err) {
-      console.error("❌ Gmail SMTP dispatch error, attempting fallback:", err.message);
-    }
-  }
+async function sendEmail({ to, subject, html }, returnDetails = false) {
+  const domain = getRecipientDomain(Array.isArray(to) ? to[0] : to);
+  let providerUsed = null;
+  let lastError = null;
 
-  // Option B: Fallback - Send via Resend
+  // ─────────────────────────────────────────────
+  // 1. PRIMARY: Resend HTTPS API
+  // ─────────────────────────────────────────────
   const resend = getResend();
   if (resend) {
+    providerUsed = "Resend";
+    const configuredFrom = process.env.RESEND_FROM_EMAIL;
+
+    if (!configuredFrom) {
+      console.warn("⚠️ [Resend] RESEND_FROM_EMAIL is not set. Defaulting to onboarding@resend.dev (Note: Resend will only deliver to the verified Resend account owner until domain DNS is verified).");
+    }
+
+    const fromEmail = configuredFrom || "Hadeed by Niazi <onboarding@resend.dev>";
+
     try {
-      const fromEmail = process.env.RESEND_FROM_EMAIL || "Hadeed by Niazi <onboarding@resend.dev>";
-      const result = await resend.emails.send({
+      // Promise.race with 10s timeout
+      const resendPromise = resend.emails.send({
         from: fromEmail,
         to: Array.isArray(to) ? to : [to],
         subject,
         html,
       });
 
-      if (result.error) {
-        console.error("❌ Resend error:", result.error);
-        return false;
-      }
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Resend API call timed out after 10000ms")), 10000)
+      );
 
-      console.log(`✅ Email sent via Resend to ${to} (ID: ${result.data?.id})`);
+      const result = await Promise.race([resendPromise, timeoutPromise]);
+
+      if (result.error) {
+        const errMsg = result.error.message || JSON.stringify(result.error);
+        console.error(`❌ [Resend] API returned error for recipient domain ${domain}:`, {
+          name: result.error.name || "ResendError",
+          message: errMsg,
+        });
+        lastError = `Resend error: ${errMsg}`;
+      } else {
+        console.log(`✅ [Resend] Email successfully sent to recipient domain ${domain} (ID: ${result.data?.id || "ok"})`);
+        if (returnDetails) return { success: true, provider: "Resend" };
+        return true;
+      }
+    } catch (err) {
+      console.error(`❌ [Resend] Dispatch failed for recipient domain ${domain}:`, {
+        code: err.code || "ERR_RESEND",
+        message: err.message,
+      });
+      lastError = `Resend exception: ${err.message}`;
+    }
+  } else {
+    console.log("ℹ️ [Resend] RESEND_API_KEY not configured. Checking secondary provider...");
+  }
+
+  // ─────────────────────────────────────────────
+  // 2. SECONDARY FALLBACK: Gmail SMTP (Nodemailer)
+  // ─────────────────────────────────────────────
+  const transporter = createNodemailerTransporter();
+  if (transporter) {
+    providerUsed = providerUsed ? `${providerUsed} -> Gmail SMTP` : "Gmail SMTP";
+    try {
+      const fromEmail = process.env.EMAIL_USER;
+
+      const smtpPromise = transporter.sendMail({
+        from: `"Hadeed by Niazi" <${fromEmail}>`,
+        to,
+        subject,
+        html,
+      });
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("SMTP connection timed out after 10000ms (likely blocked outbound port on host)")), 10000)
+      );
+
+      await Promise.race([smtpPromise, timeoutPromise]);
+      console.log(`✅ [Gmail SMTP] Email successfully sent to recipient domain ${domain}`);
+      if (returnDetails) return { success: true, provider: "Gmail SMTP" };
       return true;
     } catch (err) {
-      console.error("❌ Resend dispatch error:", err.message);
-      return false;
+      console.error(`❌ [Gmail SMTP] Dispatch failed for recipient domain ${domain}:`, {
+        code: err.code || "ERR_SMTP",
+        command: err.command,
+        message: err.message,
+      });
+      lastError = `Gmail SMTP error: ${err.message}`;
     }
   }
 
-  console.warn("⚠️ No email service configured (Neither EMAIL_USER/PASS nor RESEND_API_KEY worked).");
+  if (!resend && !transporter) {
+    console.warn("⚠️ No email provider configured on server (RESEND_API_KEY or EMAIL_USER/EMAIL_PASS missing).");
+    lastError = "No email provider configured on server";
+  }
+
+  if (returnDetails) {
+    return {
+      success: false,
+      provider: providerUsed || "None",
+      error: lastError || "Email dispatch failed across configured providers",
+    };
+  }
+
   return false;
 }
 
@@ -294,6 +369,7 @@ async function sendCustomerStatusUpdateEmail(order, newStatus) {
 }
 
 module.exports = {
+  sendEmail,
   sendCustomerOrderEmail,
   sendAdminNewOrderAlert,
   sendCustomerStatusUpdateEmail,

@@ -63,9 +63,15 @@ router.post(
 
       const order = await Order.create(orderData);
 
-      // Asynchronously send emails (don't block HTTP response)
-      sendCustomerOrderEmail(order).catch(err => console.error("Error sending order confirmation email:", err));
-      sendAdminNewOrderAlert(order).catch(err => console.error("Error sending admin new order alert:", err));
+      // Asynchronously trigger customer confirmation and admin alert (non-blocking)
+      if (order.customerEmail) {
+        sendCustomerOrderEmail(order).catch(err =>
+          console.error("❌ Failed to send customer order email:", err.message)
+        );
+      }
+      sendAdminNewOrderAlert(order).catch(err =>
+        console.error("❌ Failed to send admin new order alert:", err.message)
+      );
 
       res.status(201).json({
         success: true,
