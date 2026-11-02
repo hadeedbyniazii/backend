@@ -52,6 +52,15 @@ const productSchema = new mongoose.Schema(
       type: String,
       default: "Keep in a cool, dry place away from direct sunlight.",
     },
+    heritageTitle: {
+      type: String,
+      default: "",
+    },
+    heritageText: {
+      type: String,
+      default: "",
+    },
+    images: [{ type: String }],
     sizes: [sizeSchema],
     isFeatured: {
       type: Boolean,
