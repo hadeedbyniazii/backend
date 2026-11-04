@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const sizeSchema = new mongoose.Schema({
   label: { type: String, required: true },
   price: { type: Number, required: true },
+  beforePrice: { type: Number, default: 0 },
   image: { type: String, default: "" },
   inStock: { type: Boolean, default: true }
 });
